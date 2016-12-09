@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/containers/image/signature"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/distribution/metadata"
 	"github.com/docker/docker/pkg/progress"
@@ -29,6 +30,14 @@ type Puller interface {
 // through to the underlying puller implementation for use during the actual
 // pull operation.
 func newPuller(endpoint registry.APIEndpoint, repoInfo *registry.RepositoryInfo, imagePullConfig *ImagePullConfig) (Puller, error) {
+	var pc *signature.PolicyContext
+	if imagePullConfig.SignatureCheck {
+		var err error
+		pc, err = configurePolicyContext()
+		if err != nil {
+			return nil, err
+		}
+	}
 	switch endpoint.Version {
 	case registry.APIVersion2:
 		return &v2Puller{
@@ -36,6 +45,7 @@ func newPuller(endpoint registry.APIEndpoint, repoInfo *registry.RepositoryInfo,
 			endpoint:          endpoint,
 			config:            imagePullConfig,
 			repoInfo:          repoInfo,
+			policyContext:     pc,
 		}, nil
 	case registry.APIVersion1:
 		return &v1Puller{
@@ -70,7 +80,6 @@ func Pull(ctx context.Context, ref reference.Named, imagePullConfig *ImagePullCo
 		fqr, err := reference.QualifyUnqualifiedReference(ref, r)
 		if err != nil {
 			errStr := fmt.Sprintf("Failed to fully qualify %q name with %q registry: %v", ref.Name(), r, err)
-			progress.Message(imagePullConfig.ProgressOutput, "", errStr)
 			if i == len(registry.DefaultRegistries)-1 {
 				return fmt.Errorf(errStr)
 			}
@@ -78,7 +87,6 @@ func Pull(ctx context.Context, ref reference.Named, imagePullConfig *ImagePullCo
 		}
 		if err := pullFromRegistry(ctx, fqr, imagePullConfig); err != nil {
 			// make sure we get a final "Error response from daemon: "
-			progress.Message(imagePullConfig.ProgressOutput, "", err.Error())
 			if i == len(registry.DefaultRegistries)-1 {
 				return err
 			}
